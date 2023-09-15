@@ -14,8 +14,9 @@ import (
 )
 
 type Client struct {
-	Tr    *http.Client
-	Token string
+	Tr        *http.Client
+	Token     string
+	CounterId int
 }
 
 func (c *Client) buildHeaders(req *http.Request) {
@@ -23,9 +24,9 @@ func (c *Client) buildHeaders(req *http.Request) {
 }
 
 // Returns a list of log requests.
-func (c *Client) LogsList(counterId int) ([]LogRequest, error) {
+func (c *Client) LogsList() ([]LogRequest, error) {
 	createdLogs := []LogRequest{}
-	req, err := http.NewRequest("GET", fmt.Sprintf(LogsListUrl, counterId), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf(LogsListUrl, c.CounterId), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +49,8 @@ func (c *Client) LogsList(counterId int) ([]LogRequest, error) {
 }
 
 // Returns information about the log request and parts of it.
-func (c *Client) GetParts(id int, reqId int) ([]Part, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf(LogsStatusUrl, id, reqId), nil)
+func (c *Client) GetParts(reqId int) ([]Part, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf(LogsStatusUrl, c.CounterId, reqId), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -79,10 +80,10 @@ func (c *Client) GetParts(id int, reqId int) ([]Part, error) {
 }
 
 // Upload the log.
-func (c *Client) CollectAllParts(counterId int, reqId int, parts []Part) ([]string, error) {
+func (c *Client) CollectAllParts(reqId int, parts []Part) ([]string, error) {
 	files := []string{}
 	for _, p := range parts {
-		file, err := c.DownloadLogPart(counterId, reqId, p.PartNumber)
+		file, err := c.DownloadLogPart(c.CounterId, reqId, p.PartNumber)
 		if err != nil {
 			return nil, err
 		}
@@ -92,8 +93,8 @@ func (c *Client) CollectAllParts(counterId int, reqId int, parts []Part) ([]stri
 }
 
 // Uploads a part of the prepared log.
-func (c *Client) DownloadLogPart(counterId int, reqId int, partNumber int) (string, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf(DownloadLogUrl, counterId, reqId, partNumber), nil)
+func (c *Client) DownloadLogPart(reqId int, partNumber int) (string, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf(DownloadLogUrl, c.CounterId, reqId, partNumber), nil)
 	if err != nil {
 		return "", err
 	}
@@ -103,7 +104,7 @@ func (c *Client) DownloadLogPart(counterId int, reqId int, partNumber int) (stri
 		return "", err
 	}
 	defer resp.Body.Close()
-	filename := fmt.Sprintf("%v_%v_%v-*.csv", counterId, reqId, partNumber)
+	filename := fmt.Sprintf("%v_%v_%v-*.csv", c.CounterId, reqId, partNumber)
 	file, err := os.CreateTemp("/Users/kostya/Gowork/metrika-sdk", filename)
 	if err != nil {
 		return "", err
@@ -153,7 +154,6 @@ func (c *Client) DeleteLog(counterId int, reqId int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
 	return res.LogReq.Status == "cleaned_by_user", nil
 
 }
@@ -180,14 +180,14 @@ func (c *Client) GetCounters() ([]Counter, error) {
 }
 
 // This function returns reques_id for the log.
-func (c *Client) CreateLog(id int, dateFrom string, dateTo string, fields string, source string) (int, error) {
+func (c *Client) CreateLog(dateFrom string, dateTo string, fields string, source string) (int, error) {
 	d := url.Values{
 		"date1":  []string{dateFrom},
 		"date2":  []string{dateTo},
 		"fields": []string{fields},
 		"source": []string{source},
 	}
-	req, err := http.NewRequest("POST", fmt.Sprintf(CreateLogUrl, id), nil)
+	req, err := http.NewRequest("POST", fmt.Sprintf(CreateLogUrl, c.CounterId), nil)
 	req.URL.RawQuery = d.Encode()
 
 	if err != nil {
