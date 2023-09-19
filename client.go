@@ -16,7 +16,12 @@ import (
 type Client struct {
 	Tr        *http.Client
 	Token     string
-	CounterId int
+	CounterId int64
+}
+
+type DateR struct {
+	DateFrom string
+	DateTo   string
 }
 
 func (c *Client) buildHeaders(req *http.Request) {
@@ -83,7 +88,7 @@ func (c *Client) GetParts(reqId int) ([]Part, error) {
 func (c *Client) CollectAllParts(reqId int, parts []Part) ([]string, error) {
 	files := []string{}
 	for _, p := range parts {
-		file, err := c.DownloadLogPart(c.CounterId, reqId, p.PartNumber)
+		file, err := c.DownloadLogPart(reqId, p.PartNumber)
 		if err != nil {
 			return nil, err
 		}
