@@ -13,15 +13,16 @@ import (
 	"time"
 )
 
+type DateRange struct {
+	DateFrom string
+	DateTo   string
+}
+
 type Client struct {
 	Tr        *http.Client
 	Token     string
 	CounterId int64
-}
-
-type DateR struct {
-	DateFrom string
-	DateTo   string
+	DateRange DateRange
 }
 
 func (c *Client) buildHeaders(req *http.Request) {
