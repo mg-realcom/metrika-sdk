@@ -2,6 +2,7 @@ package metrika_sdk
 
 import (
 	"bufio"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -24,9 +25,9 @@ func (c *Client) buildHeaders(req *http.Request) {
 }
 
 // Returns a list of log requests.
-func (c *Client) LogsList() ([]LogRequest, error) {
+func (c *Client) LogsList(ctx context.Context) ([]LogRequest, error) {
 	createdLogs := []LogRequest{}
-	req, err := http.NewRequest("GET", fmt.Sprintf(LogsListUrl, c.CounterId), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf(LogsListUrl, c.CounterId), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -49,8 +50,8 @@ func (c *Client) LogsList() ([]LogRequest, error) {
 }
 
 // Returns information about the log request and parts of it.
-func (c *Client) GetParts(reqId int) ([]Part, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf(LogsStatusUrl, c.CounterId, reqId), nil)
+func (c *Client) GetParts(ctx context.Context, reqId int) ([]Part, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf(LogsStatusUrl, c.CounterId, reqId), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -80,10 +81,10 @@ func (c *Client) GetParts(reqId int) ([]Part, error) {
 }
 
 // Upload the log.
-func (c *Client) CollectAllParts(reqId int, parts []Part) ([]string, error) {
+func (c *Client) CollectAllParts(ctx context.Context, reqId int, parts []Part, directory string) ([]string, error) {
 	files := []string{}
 	for _, p := range parts {
-		file, err := c.DownloadLogPart(reqId, p.PartNumber)
+		file, err := c.DownloadLogPart(ctx, reqId, p.PartNumber, directory)
 		if err != nil {
 			return nil, err
 		}
@@ -93,8 +94,8 @@ func (c *Client) CollectAllParts(reqId int, parts []Part) ([]string, error) {
 }
 
 // Uploads a part of the prepared log.
-func (c *Client) DownloadLogPart(reqId int, partNumber int) (string, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf(DownloadLogUrl, c.CounterId, reqId, partNumber), nil)
+func (c *Client) DownloadLogPart(ctx context.Context, reqId, partNumber int, directory string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf(DownloadLogUrl, c.CounterId, reqId, partNumber), nil)
 	if err != nil {
 		return "", err
 	}
@@ -105,7 +106,7 @@ func (c *Client) DownloadLogPart(reqId int, partNumber int) (string, error) {
 	}
 	defer resp.Body.Close()
 	filename := fmt.Sprintf("%v_%v_%v-*.csv", c.CounterId, reqId, partNumber)
-	file, err := os.CreateTemp("/Users/kostya/Gowork/metrika-sdk", filename)
+	file, err := os.CreateTemp(directory, filename)
 	if err != nil {
 		return "", err
 	}
@@ -137,9 +138,9 @@ func (c *Client) DownloadLogPart(reqId int, partNumber int) (string, error) {
 }
 
 // Delete the log.
-func (c *Client) DeleteLog(counterId int, reqId int) (bool, error) {
+func (c *Client) DeleteLog(ctx context.Context, counterId, reqId int) (bool, error) {
 	res := MetrikaResponse{}
-	req, err := http.NewRequest("POST", fmt.Sprintf(DeleteLogUrl, counterId, reqId), nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf(DeleteLogUrl, counterId, reqId), nil)
 	if err != nil {
 		return false, err
 	}
@@ -159,8 +160,8 @@ func (c *Client) DeleteLog(counterId int, reqId int) (bool, error) {
 }
 
 // Get all counters.
-func (c *Client) GetCounters() ([]Counter, error) {
-	req, err := http.NewRequest("GET", CountersUrl, nil)
+func (c *Client) GetCounters(ctx context.Context) ([]Counter, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", CountersUrl, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -180,16 +181,15 @@ func (c *Client) GetCounters() ([]Counter, error) {
 }
 
 // This function returns reques_id for the log.
-func (c *Client) CreateLog(dateFrom string, dateTo string, fields string, source string) (int, error) {
+func (c *Client) CreateLog(ctx context.Context, dateFrom, dateTo, fields, source string) (int, error) {
 	d := url.Values{
 		"date1":  []string{dateFrom},
 		"date2":  []string{dateTo},
 		"fields": []string{fields},
 		"source": []string{source},
 	}
-	req, err := http.NewRequest("POST", fmt.Sprintf(CreateLogUrl, c.CounterId), nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf(CreateLogUrl, c.CounterId), nil)
 	req.URL.RawQuery = d.Encode()
-
 	if err != nil {
 		panic(err)
 	}
