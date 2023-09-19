@@ -133,7 +133,7 @@ func (c *Client) DownloadLogPart(ctx context.Context, reqId, partNumber int, dir
 	//if err != nil {
 	//	return "", err
 	//}
-	return filename, nil
+	return file.Name(), nil
 
 }
 
@@ -144,7 +144,7 @@ func (c *Client) DeleteLog(ctx context.Context, counterId, reqId int) (bool, err
 	if err != nil {
 		return false, err
 	}
-	req.Header.Add("Authorization", "Bearer "+c.Token)
+	c.buildHeaders(req)
 	resp, err := c.Tr.Do(req)
 	if err != nil {
 		return false, err
