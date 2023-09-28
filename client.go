@@ -1,16 +1,13 @@
 package metrika_sdk
 
 import (
-	"bufio"
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -110,29 +107,12 @@ func (c *Client) DownloadLogPart(ctx context.Context, reqId, partNumber int, dir
 	if err != nil {
 		return "", err
 	}
-	writer := csv.NewWriter(file)
-	writer.Comma = '|'
-	defer file.Close()
-	reader := bufio.NewReader(resp.Body)
-	scanner := bufio.NewScanner(reader)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		line := strings.ReplaceAll(scanner.Text(), "\"", "")
-		//line = strings.ReplaceAll(line, "--", "")
-		// Split the line by tabs
-		fields := strings.Split(line, "\t")
-		// Write the fields to the CSV file
-		err = writer.Write(fields)
-		if err != nil {
-			return "", fmt.Errorf("failed to write to CSV file: %v", err)
-		}
-
+	body, _ := io.ReadAll(resp.Body)
+	err = os.WriteFile(file.Name(), body, 0644)
+	if err != nil {
+		return "", err
 	}
-	//body, _ := io.ReadAll(resp.Body)
-	//err = os.WriteFile(file.Name(), body, 0644)
-	//if err != nil {
-	//	return "", err
-	//}
+
 	return file.Name(), nil
 
 }
