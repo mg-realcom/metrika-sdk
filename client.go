@@ -101,19 +101,18 @@ func (c *Client) DownloadLogPart(ctx context.Context, reqId, partNumber int, dir
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
 	filename := fmt.Sprintf("%v_%v_%v-*.csv", c.CounterId, reqId, partNumber)
-	file, err := os.CreateTemp(directory, filename)
+	f, err := os.CreateTemp(directory, filename)
 	if err != nil {
 		return "", err
 	}
-	body, _ := io.ReadAll(resp.Body)
-	err = os.WriteFile(file.Name(), body, 0644)
+	defer f.Close()
+	defer resp.Body.Close()
+	_, err = io.Copy(f, resp.Body)
 	if err != nil {
 		return "", err
 	}
-
-	return file.Name(), nil
+	return f.Name(), nil
 
 }
 
