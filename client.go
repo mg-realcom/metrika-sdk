@@ -98,22 +98,22 @@ func (c *Client) DownloadLogPart(ctx context.Context, reqId, partNumber int, dir
 	}
 	c.buildHeaders(req)
 	resp, err := c.Tr.Do(req)
-	if err != nil {
-		return "", err
+	if resp == nil {
+		return "", fmt.Errorf("response is nil")
 	}
-	filename := fmt.Sprintf("%v_%v_%v-*.csv", c.CounterId, reqId, partNumber)
-	f, err := os.CreateTemp(directory, filename)
+	defer resp.Body.Close()
+	filename := fmt.Sprintf("%v_%v_%v", c.CounterId, reqId, partNumber)
+	f, err := os.CreateTemp(directory, fmt.Sprintf("%s_*.tsv", filename))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create file: %w", err)
 	}
 	defer f.Close()
-	defer resp.Body.Close()
+
 	_, err = io.Copy(f, resp.Body)
 	if err != nil {
 		return "", err
 	}
 	return f.Name(), nil
-
 }
 
 // Delete the log.
