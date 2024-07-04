@@ -14,152 +14,240 @@ import (
 type Client struct {
 	Tr        *http.Client
 	Token     string
-	CounterId int64
+	CounterID int64
 }
 
 func (c *Client) buildHeaders(req *http.Request) {
 	req.Header.Add("Authorization", "Bearer "+c.Token)
 }
 
-// Returns a list of log requests.
+// LogsList Returns a list of log requests.
 func (c *Client) LogsList(ctx context.Context) ([]LogRequest, error) {
-	createdLogs := []LogRequest{}
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf(LogsListUrl, c.CounterId), nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(LogsListURL, c.CounterID), nil)
 	if err != nil {
-		return nil, err
+		return nil, newInternalError(err, CreateRequestFailedMsg)
 	}
+
 	c.buildHeaders(req)
+
 	resp, err := c.Tr.Do(req)
 	if err != nil {
+		return nil, newInternalError(err, RequestFailedMsg)
+	}
+
+	if err := statusCodeHandler(resp); err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	res := make(map[string][]LogRequest)
-	err = json.Unmarshal(body, &res)
+
+	defer closeBody(resp.Body)
+
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, newInternalError(err, ReadResponseFailedMsg)
 	}
+
+	res := make(map[string][]LogRequest)
+
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, newInternalError(err, UnmarshalResponseFailedMsg)
+	}
+
+	createdLogs := make([]LogRequest, 0)
+
 	for _, v := range res["requests"] {
 		createdLogs = append(createdLogs, v)
 	}
+
 	return createdLogs, nil
 }
 
-// Returns information about the log request and parts of it.
-func (c *Client) GetParts(ctx context.Context, reqId int) ([]Part, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf(LogsStatusUrl, c.CounterId, reqId), nil)
+// GetParts Returns information about the log request and parts of it.
+func (c *Client) GetParts(ctx context.Context, reqID int) ([]Part, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(LogsStatusURL, c.CounterID, reqID), nil)
 	if err != nil {
-		panic(err)
+		return nil, newInternalError(err, CreateRequestFailedMsg)
 	}
+
 	c.buildHeaders(req)
+
 	var resp *http.Response
-	var res MetrikaResponse
+
 	for {
 		resp, err = c.Tr.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, newInternalError(err, RequestFailedMsg)
 		}
-		defer resp.Body.Close()
 
-		body, _ := io.ReadAll(resp.Body)
-		err = json.Unmarshal(body, &res)
-		if err != nil {
+		if err := statusCodeHandler(resp); err != nil {
 			return nil, err
 		}
-		if res.LogReq.Status == "processed" {
-			fmt.Println("Отчет готов")
-			return res.LogReq.Parts, nil
-		} else if res.LogReq.Status == "cleaned_by_user" {
-			return nil, fmt.Errorf("Такого отчета не существует")
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			closeBody(resp.Body)
+
+			return nil, newInternalError(err, ReadResponseFailedMsg)
 		}
-		time.Sleep(10 * time.Second)
+
+		closeBody(resp.Body)
+
+		var res MetrikaResponse
+
+		if err := json.Unmarshal(body, &res); err != nil {
+			return nil, newInternalError(err, UnmarshalResponseFailedMsg)
+		}
+
+		switch res.LogReq.Status {
+		case string(Processed):
+			return res.LogReq.Parts, nil
+		case string(CleanedByUser), string(CleanedAutomaticallyAsTooOld):
+			return nil, &APIError{
+				Errors:  nil,
+				Code:    http.StatusNotFound,
+				Message: "отчет удалён пользователем или автоматически",
+			}
+		case string(Canceled):
+			return nil, &APIError{
+				Errors:  nil,
+				Code:    http.StatusNotFound,
+				Message: "отчет отменен",
+			}
+		case string(ProcessingFailed):
+			return nil, &APIError{
+				Errors:  nil,
+				Code:    http.StatusInternalServerError,
+				Message: "Ошибка при обработке отчета",
+			}
+		case string(AwaitingRetry), string(Created):
+			time.Sleep(10 * time.Second)
+		default:
+			return nil, &InternalError{msg: fmt.Sprintf("неизвестный статус %s", res.LogReq.Status)}
+		}
 	}
 }
 
-// Upload the log.
-func (c *Client) CollectAllParts(ctx context.Context, reqId int, parts []Part, directory string) ([]string, error) {
-	files := []string{}
+// CollectAllParts Upload the log.
+func (c *Client) CollectAllParts(ctx context.Context, reqID int, parts []Part, directory string) ([]string, error) {
+	files := make([]string, 0, len(parts))
+
 	for _, p := range parts {
-		file, err := c.DownloadLogPart(ctx, reqId, p.PartNumber, directory)
+		file, err := c.DownloadLogPart(ctx, reqID, p.PartNumber, directory)
 		if err != nil {
 			return nil, err
 		}
+
 		files = append(files, file)
 	}
+
 	return files, nil
 }
 
-// Uploads a part of the prepared log.
-func (c *Client) DownloadLogPart(ctx context.Context, reqId, partNumber int, directory string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf(DownloadLogUrl, c.CounterId, reqId, partNumber), nil)
+// DownloadLogPart Uploads a part of the prepared log.
+func (c *Client) DownloadLogPart(ctx context.Context, reqID, partNumber int, directory string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(DownloadLogURL, c.CounterID, reqID, partNumber), nil)
 	if err != nil {
-		return "", err
+		return "", newInternalError(err, CreateRequestFailedMsg)
 	}
+
 	c.buildHeaders(req)
+
 	resp, err := c.Tr.Do(req)
 	if err != nil {
+		return "", newInternalError(err, RequestFailedMsg)
+	}
+
+	if err := statusCodeHandler(resp); err != nil {
 		return "", err
 	}
-	filename := fmt.Sprintf("%v_%v_%v-*.csv", c.CounterId, reqId, partNumber)
+
+	defer closeBody(resp.Body)
+
+	filename := fmt.Sprintf("%v_%v_%v-*.csv", c.CounterID, reqID, partNumber)
+
 	f, err := os.CreateTemp(directory, filename)
 	if err != nil {
 		return "", err
 	}
+
 	defer f.Close()
-	defer resp.Body.Close()
+
 	_, err = io.Copy(f, resp.Body)
 	if err != nil {
 		return "", err
 	}
+
 	return f.Name(), nil
 
 }
 
-// Delete the log.
+// DeleteLog Delete the log.
 func (c *Client) DeleteLog(ctx context.Context, counterId, reqId int) (bool, error) {
-	res := MetrikaResponse{}
-	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf(DeleteLogUrl, counterId, reqId), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(DeleteLogURL, counterId, reqId), nil)
 	if err != nil {
-		return false, err
+		return false, newInternalError(err, CreateRequestFailedMsg)
 	}
+
 	c.buildHeaders(req)
+
 	resp, err := c.Tr.Do(req)
 	if err != nil {
+		return false, newInternalError(err, RequestFailedMsg)
+	}
+
+	if err := statusCodeHandler(resp); err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	err = json.Unmarshal(body, &res)
+
+	defer closeBody(resp.Body)
+
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, err
+		return false, newInternalError(err, ReadResponseFailedMsg)
 	}
-	return res.LogReq.Status == "cleaned_by_user", nil
+
+	var res MetrikaResponse
+
+	if err := json.Unmarshal(body, &res); err != nil {
+		return false, newInternalError(err, UnmarshalResponseFailedMsg)
+	}
+
+	return res.LogReq.Status == string(CleanedByUser), nil
 
 }
 
-// Get all counters.
+// GetCounters Get all counters.
 func (c *Client) GetCounters(ctx context.Context) ([]Counter, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", CountersUrl, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, CountersURL, nil)
 	if err != nil {
-		panic(err)
+		return nil, newInternalError(err, CreateRequestFailedMsg)
 	}
+
 	c.buildHeaders(req)
+
 	resp, err := c.Tr.Do(req)
 	if err != nil {
-		panic(err)
+		return nil, newInternalError(err, RequestFailedMsg)
 	}
-	defer resp.Body.Close()
+
+	if err := statusCodeHandler(resp); err != nil {
+		return nil, err
+	}
+
+	defer closeBody(resp.Body)
+
 	var res CounterResponse
+
 	body, _ := io.ReadAll(resp.Body)
-	err = json.Unmarshal(body, &res)
-	if err != nil {
-		return res.Counters, err
+
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, newInternalError(err, UnmarshalResponseFailedMsg)
 	}
+
 	return res.Counters, nil
 }
 
-// This function returns reques_id for the log.
+// CreateLog This function returns request_id for the log.
 func (c *Client) CreateLog(ctx context.Context, dateFrom, dateTo, fields, source string) (int, error) {
 	d := url.Values{
 		"date1":  []string{dateFrom},
@@ -167,24 +255,73 @@ func (c *Client) CreateLog(ctx context.Context, dateFrom, dateTo, fields, source
 		"fields": []string{fields},
 		"source": []string{source},
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf(CreateLogUrl, c.CounterId), nil)
-	req.URL.RawQuery = d.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(CreateLogURL, c.CounterID), nil)
 	if err != nil {
-		panic(err)
+		return 0, newInternalError(err, CreateRequestFailedMsg)
 	}
+
+	req.URL.RawQuery = d.Encode()
+
 	c.buildHeaders(req)
+
 	resp, err := c.Tr.Do(req)
 	if err != nil {
+		return 0, newInternalError(err, RequestFailedMsg)
+	}
+
+	if err := statusCodeHandler(resp); err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+
+	defer closeBody(resp.Body)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, newInternalError(err, ReadResponseFailedMsg)
+	}
 
 	var res MetrikaResponse
 
-	respBody, _ := io.ReadAll(resp.Body)
-	err = json.Unmarshal(respBody, &res)
-	if err != nil {
-		return 0, err
+	if err := json.Unmarshal(body, &res); err != nil {
+		return 0, newInternalError(err, UnmarshalResponseFailedMsg)
 	}
+
 	return res.LogReq.RequestID, nil
+}
+
+func statusCodeHandler(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+
+	defer closeBody(resp.Body)
+
+	defaultErr := &APIError{
+		Code:    resp.StatusCode,
+		Message: http.StatusText(resp.StatusCode),
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Failed to read response body: %v\n", err)
+
+		return defaultErr
+	}
+
+	var apiError APIError
+
+	if err := json.Unmarshal(body, &apiError); err != nil {
+		fmt.Printf("Failed to unmarshal API error: %v\n", err)
+
+		return defaultErr
+	}
+
+	return &apiError
+}
+
+func closeBody(body io.ReadCloser) {
+	if err := body.Close(); err != nil {
+		fmt.Printf("Failed to close response body: %v\n", err)
+	}
 }
