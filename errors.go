@@ -6,7 +6,6 @@ const (
 	RequestFailedMsg           = "request failed"
 	CreateRequestFailedMsg     = "can't create request"
 	UnmarshalResponseFailedMsg = "can't unmarshal response"
-	ReadResponseFailedMsg      = "can't read response body"
 )
 
 type APIError struct {

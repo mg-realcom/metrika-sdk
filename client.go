@@ -17,86 +17,49 @@ type Client struct {
 	CounterID int64
 }
 
+// buildHeaders adds authorization headers to the request.
 func (c *Client) buildHeaders(req *http.Request) {
 	req.Header.Add("Authorization", "Bearer "+c.Token)
 }
 
 // LogsList Returns a list of log requests.
 func (c *Client) LogsList(ctx context.Context) ([]LogRequest, error) {
+	URL := fmt.Sprintf(LogsListURL, c.CounterID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(LogsListURL, c.CounterID), nil)
+	resp, err := c.doRequest(ctx, http.MethodGet, URL)
 	if err != nil {
-		return nil, newInternalError(err, CreateRequestFailedMsg)
-	}
-
-	c.buildHeaders(req)
-
-	resp, err := c.Tr.Do(req)
-	if err != nil {
-		return nil, newInternalError(err, RequestFailedMsg)
-	}
-
-	if err := statusCodeHandler(resp); err != nil {
 		return nil, err
 	}
 
 	defer closeBody(resp.Body)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, newInternalError(err, ReadResponseFailedMsg)
-	}
-
-	res := make(map[string][]LogRequest)
-
-	if err := json.Unmarshal(body, &res); err != nil {
+	var res map[string][]LogRequest
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, newInternalError(err, UnmarshalResponseFailedMsg)
 	}
 
-	createdLogs := make([]LogRequest, 0)
-
-	for _, v := range res["requests"] {
-		createdLogs = append(createdLogs, v)
-	}
-
-	return createdLogs, nil
+	return res["requests"], nil
 }
 
 // GetParts Returns information about the log request and parts of it.
 func (c *Client) GetParts(ctx context.Context, reqID int) ([]Part, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(LogsStatusURL, c.CounterID, reqID), nil)
-	if err != nil {
-		return nil, newInternalError(err, CreateRequestFailedMsg)
-	}
-
-	c.buildHeaders(req)
-
-	var resp *http.Response
+	URL := fmt.Sprintf(LogsStatusURL, c.CounterID, reqID)
 
 	for {
-		resp, err = c.Tr.Do(req)
+		resp, err := c.doRequest(ctx, http.MethodGet, URL)
 		if err != nil {
-			return nil, newInternalError(err, RequestFailedMsg)
-		}
-
-		if err := statusCodeHandler(resp); err != nil {
 			return nil, err
 		}
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
+		var res MetrikaResponse
+
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 			closeBody(resp.Body)
 
-			return nil, newInternalError(err, ReadResponseFailedMsg)
+			return nil, newInternalError(err, UnmarshalResponseFailedMsg)
 		}
 
 		closeBody(resp.Body)
-
-		var res MetrikaResponse
-
-		if err := json.Unmarshal(body, &res); err != nil {
-			return nil, newInternalError(err, UnmarshalResponseFailedMsg)
-		}
 
 		switch res.LogReq.Status {
 		case string(Processed):
@@ -145,19 +108,10 @@ func (c *Client) CollectAllParts(ctx context.Context, reqID int, parts []Part, d
 
 // DownloadLogPart Uploads a part of the prepared log.
 func (c *Client) DownloadLogPart(ctx context.Context, reqID, partNumber int, directory string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(DownloadLogURL, c.CounterID, reqID, partNumber), nil)
+	URL := fmt.Sprintf(DownloadLogURL, c.CounterID, reqID, partNumber)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, URL)
 	if err != nil {
-		return "", newInternalError(err, CreateRequestFailedMsg)
-	}
-
-	c.buildHeaders(req)
-
-	resp, err := c.Tr.Do(req)
-	if err != nil {
-		return "", newInternalError(err, RequestFailedMsg)
-	}
-
-	if err := statusCodeHandler(resp); err != nil {
 		return "", err
 	}
 
@@ -178,59 +132,32 @@ func (c *Client) DownloadLogPart(ctx context.Context, reqID, partNumber int, dir
 	}
 
 	return f.Name(), nil
-
 }
 
 // DeleteLog Delete the log.
-func (c *Client) DeleteLog(ctx context.Context, counterId, reqId int) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(DeleteLogURL, counterId, reqId), nil)
+func (c *Client) DeleteLog(ctx context.Context, counterID, reqID int) (bool, error) {
+	URL := fmt.Sprintf(DeleteLogURL, counterID, reqID)
+
+	resp, err := c.doRequest(ctx, http.MethodPost, URL)
 	if err != nil {
-		return false, newInternalError(err, CreateRequestFailedMsg)
-	}
-
-	c.buildHeaders(req)
-
-	resp, err := c.Tr.Do(req)
-	if err != nil {
-		return false, newInternalError(err, RequestFailedMsg)
-	}
-
-	if err := statusCodeHandler(resp); err != nil {
 		return false, err
 	}
 
 	defer closeBody(resp.Body)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, newInternalError(err, ReadResponseFailedMsg)
-	}
-
 	var res MetrikaResponse
 
-	if err := json.Unmarshal(body, &res); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return false, newInternalError(err, UnmarshalResponseFailedMsg)
 	}
 
 	return res.LogReq.Status == string(CleanedByUser), nil
-
 }
 
 // GetCounters Get all counters.
 func (c *Client) GetCounters(ctx context.Context) ([]Counter, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, CountersURL, nil)
+	resp, err := c.doRequest(ctx, http.MethodGet, CountersURL)
 	if err != nil {
-		return nil, newInternalError(err, CreateRequestFailedMsg)
-	}
-
-	c.buildHeaders(req)
-
-	resp, err := c.Tr.Do(req)
-	if err != nil {
-		return nil, newInternalError(err, RequestFailedMsg)
-	}
-
-	if err := statusCodeHandler(resp); err != nil {
 		return nil, err
 	}
 
@@ -238,9 +165,7 @@ func (c *Client) GetCounters(ctx context.Context) ([]Counter, error) {
 
 	var res CounterResponse
 
-	body, _ := io.ReadAll(resp.Body)
-
-	if err := json.Unmarshal(body, &res); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, newInternalError(err, UnmarshalResponseFailedMsg)
 	}
 
@@ -256,34 +181,17 @@ func (c *Client) CreateLog(ctx context.Context, dateFrom, dateTo, fields, source
 		"source": []string{source},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(CreateLogURL, c.CounterID), nil)
+	URL := fmt.Sprintf(CreateLogURL, c.CounterID) + "?" + d.Encode()
+
+	resp, err := c.doRequest(ctx, http.MethodPost, URL)
 	if err != nil {
-		return 0, newInternalError(err, CreateRequestFailedMsg)
-	}
-
-	req.URL.RawQuery = d.Encode()
-
-	c.buildHeaders(req)
-
-	resp, err := c.Tr.Do(req)
-	if err != nil {
-		return 0, newInternalError(err, RequestFailedMsg)
-	}
-
-	if err := statusCodeHandler(resp); err != nil {
 		return 0, err
 	}
 
 	defer closeBody(resp.Body)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, newInternalError(err, ReadResponseFailedMsg)
-	}
-
 	var res MetrikaResponse
-
-	if err := json.Unmarshal(body, &res); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return 0, newInternalError(err, UnmarshalResponseFailedMsg)
 	}
 
@@ -304,7 +212,7 @@ func statusCodeHandler(resp *http.Response) error {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Failed to read response body: %v\n", err)
+		fmt.Printf("failed to read response body: %s\n", err)
 
 		return defaultErr
 	}
@@ -312,7 +220,7 @@ func statusCodeHandler(resp *http.Response) error {
 	var apiError APIError
 
 	if err := json.Unmarshal(body, &apiError); err != nil {
-		fmt.Printf("Failed to unmarshal API error: %v\n", err)
+		fmt.Printf("Failed to unmarshal API error: %s\n", err)
 
 		return defaultErr
 	}
@@ -322,6 +230,26 @@ func statusCodeHandler(resp *http.Response) error {
 
 func closeBody(body io.ReadCloser) {
 	if err := body.Close(); err != nil {
-		fmt.Printf("Failed to close response body: %v\n", err)
+		fmt.Printf("Failed to close response body: %s\n", err)
 	}
+}
+
+func (c *Client) doRequest(ctx context.Context, method, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return nil, newInternalError(err, CreateRequestFailedMsg)
+	}
+
+	c.buildHeaders(req)
+
+	resp, err := c.Tr.Do(req)
+	if err != nil {
+		return nil, newInternalError(err, RequestFailedMsg)
+	}
+
+	if err := statusCodeHandler(resp); err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
