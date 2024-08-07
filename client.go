@@ -173,12 +173,13 @@ func (c *Client) GetCounters(ctx context.Context) ([]Counter, error) {
 }
 
 // CreateLog This function returns request_id for the log.
-func (c *Client) CreateLog(ctx context.Context, dateFrom, dateTo, fields, source string) (int, error) {
+func (c *Client) CreateLog(ctx context.Context, dateFrom, dateTo, fields, source, attribution string) (int, error) {
 	d := url.Values{
-		"date1":  []string{dateFrom},
-		"date2":  []string{dateTo},
-		"fields": []string{fields},
-		"source": []string{source},
+		"date1":       []string{dateFrom},
+		"date2":       []string{dateTo},
+		"fields":      []string{fields},
+		"source":      []string{source},
+		"attribution": []string{attribution},
 	}
 
 	URL := fmt.Sprintf(CreateLogURL, c.CounterID) + "?" + d.Encode()
